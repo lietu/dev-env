@@ -5,7 +5,7 @@
 
 # Edit these if you don't want these things installed or want something more
 PACMAN_EXTRAS="discord vivaldi vivaldi-ffmpeg-codecs sublime-merge sublime-text"
-AUR_EXTRAS="jetbrains-toolbox 1password insomnia stripe-cli-bin google-cloud-sdk azure-cli-bin git-credential-manager-bin"
+AUR_EXTRAS="jetbrains-toolbox 1password insomnia stripe-cli-bin google-cloud-sdk azure-cli-bin git-credential-manager-core-bin"
 SNAP_EXTRAS="slack spotify"
 
 CREDENTIAL_STORE="plaintext"  # https://github.com/GitCredentialManager/git-credential-manager/blob/main/docs/credstores.md
