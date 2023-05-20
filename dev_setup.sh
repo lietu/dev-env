@@ -4,12 +4,24 @@
 #
 
 # Edit these if you don't want these things installed or want something more
-PACMAN_EXTRAS="discord vivaldi vivaldi-ffmpeg-codecs sublime-merge sublime-text"
-AUR_EXTRAS="jetbrains-toolbox 1password insomnia stripe-cli-bin google-cloud-sdk azure-cli-bin git-credential-manager-core-bin"
-SNAP_EXTRAS="slack spotify"
+APT_EXTRAS="kde-full exa firefox sublime-merge sublime-text vivaldi-stable fonts-jetbrains-mono google-cloud-cli spice-vdagent spice-webdavd virtualbox-guest-utils virtualbox-guest-x11"
+TASKS="kde-desktop ssh-server"
 
 CREDENTIAL_STORE="plaintext"  # https://github.com/GitCredentialManager/git-credential-manager/blob/main/docs/credstores.md
 
+# Locale configuration
+export LANG=en_US.UTF-8
+export LANGUAGE=en_US
+export LC_ALL=en_US.UTF-8
+export LC_NUMERIC=en_IE.UTF-8
+export LC_TIME=en_CA.UTF-8
+export LC_MONETARY=en_IE.UTF-8
+export LC_PAPER=en_IE.UTF-8
+export LC_NAME=en_IE.UTF-8
+export LC_ADDRESS=en_IE.UTF-8
+export LC_TELEPHONE=en_IE.UTF-8
+export LC_MEASUREMENT=en_IE.UTF-8
+export TIME_STYLE="+%Y-%m-%d %H:%M:%S"
 
 #########################
 #                       #
@@ -20,9 +32,18 @@ CREDENTIAL_STORE="plaintext"  # https://github.com/GitCredentialManager/git-cred
 # No need to touch anything after this point
 
 USER=$(who -m | cut -d' ' -f1)
+GROUP=$(groups $USER | cut -d':' -f2 | cut -d' ' -f2)
 USER_HOME=$(bash -c "cd ~$(printf %q "$USER") && pwd")
 SCRIPTNAME=$(basename "$0")
 start_time="$(date +%s)"
+
+export _MAXNUM=10
+export DEBIAN_FRONTEND="noninteractive"
+export DEB_PYTHON_INSTALL_LAYOUT=deb
+export POETRY_HOME="$USER_HOME/.local/poetry"
+
+# Abort on error, it's easier to fix errors you can see
+set -e
 
 #
 # Utilities
@@ -53,58 +74,153 @@ function label {
 # Steps
 #
 
-function install_keys {
-  # Sublime HQ
-  curl -O https://download.sublimetext.com/sublimehq-pub.gpg
-  pacman-key --add sublimehq-pub.gpg
-  pacman-key --lsign-key 8A8F901A
-  rm sublimehq-pub.gpg
-}
-
 function setup_basic_deps {
-  label "Setting up basic dependencies"
+  label "Setting up APT sources"
 
-  pacman --noconfirm --needed -S \
-    base-devel \
-    bpython \
+  cat << EOF > /etc/apt/sources.list
+deb mirror://mirrors.ubuntu.com/mirrors.txt jammy main restricted universe multiverse
+deb mirror://mirrors.ubuntu.com/mirrors.txt jammy-updates main restricted universe multiverse
+deb mirror://mirrors.ubuntu.com/mirrors.txt jammy-backports main restricted universe multiverse
+deb mirror://mirrors.ubuntu.com/mirrors.txt jammy-security main restricted universe multiverse
+EOF
+
+  label "Installing apt-fast"
+  
+  add-apt-repository -y ppa:apt-fast/stable
+  apt-get update
+  apt-get -y install apt-fast
+
+  # Configuring higher number of simultaneous connections
+  sed -Ei "s@^_MAXNUM=[0-9]+@_MAXNUM=${_MAXNUM}@g" /etc/apt-fast.conf
+
+  label "Updating system and setting up basic dependencies"
+
+  apt-fast upgrade -y
+
+  apt-fast install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    tasksel \
+    build-essential \
+    lsb-release \
+    apt-transport-https \
     btop \
-    byobu \
-    docker \
-    go \
-    jre-openjdk-headless \
-    npm \
-    pnpm \
-    python-pip \
-    python-poetry \
+    bpython \
     xpra \
-    yay \
+    wget \
+    ubuntu-keyring \
+    python3.11 \
+    python3.11-venv \
+    python3-distutils \
+    openjdk-19-jre \
+    golang-1.18 \
+    golang-go \
     # This is intentional
 }
 
+function install_keys {
+  # Sublime HQ
+  curl https://download.sublimetext.com/sublimehq-pub.gpg | gpg --dearmor > /etc/apt/trusted.gpg.d/sublimehq-archive.gpg
 
-function setup_extras {
-  label "Setting up extras"
+  # Google Cloud
+  curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
 
-  pacman --noconfirm --needed -S $PACMAN_EXTRAS
-  sudo -u "$USER" yay --noconfirm -S $AUR_EXTRAS
-  snap install $SNAP_EXTRAS
+  # Docker
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor > /usr/share/keyrings/docker-archive-keyring.gpg
+
+  # Vivaldi
+  curl https://repo.vivaldi.com/archive/linux_signing_key.pub | gpg --dearmor > /usr/share/keyrings/vivaldi.gpg
+
+  # MongoDB
+  curl -fsSL https://pgp.mongodb.com/server-6.0.asc | gpg --dearmor > /usr/share/keyrings/mongodb-server-6.0.gpg
 }
 
 function setup_repos {
   label "Setting up extra repos"
 
   # Sublime HQ
-  if ! grep "sublime-text" /etc/pacman.conf; then
-    echo -e "\n[sublime-text]\nServer = https://download.sublimetext.com/arch/stable/x86_64" >> /etc/pacman.conf
-  fi
+  echo "deb https://download.sublimetext.com/ apt/stable/" > /etc/apt/sources.list.d/sublime-text.list
 
-  # Update databases
-  pacman -Syy
+  # Google Cloud
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
+
+  # Docker
+  echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+
+  # Vivaldi
+  echo "deb [arch=amd64 signed-by=/usr/share/keyrings/vivaldi.gpg] https://repo.vivaldi.com/archive/deb/ stable main" > /etc/apt/sources.list.d/vivaldi.list
+
+  # MongoDB
+  echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-6.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" > /etc/apt/sources.list.d/mongodb-org-6.0.list
+
+  # NodeSource (also runs apt-get update)
+  curl -sL https://deb.nodesource.com/setup_18.x | bash -
+}
+
+function setup_docker {
+  apt-fast install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+}
+
+function setup_mongodb {
+  apt-fast install -y mongodb-org
+
+  # Version pinning
+  echo "mongodb-org hold" | sudo dpkg --set-selections
+  echo "mongodb-org-database hold" | sudo dpkg --set-selections
+  echo "mongodb-org-server hold" | sudo dpkg --set-selections
+  echo "mongodb-mongosh hold" | sudo dpkg --set-selections
+  echo "mongodb-org-mongos hold" | sudo dpkg --set-selections
+  echo "mongodb-org-tools hold" | sudo dpkg --set-selections
+}
+
+function setup_node {
+  apt-fast install -y --no-install-recommends nodejs
+  npm install -g pnpm yarn
+}
+
+function setup_rust {
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y 
+}
+
+function setup_gcm {
+  wget https://github.com/git-ecosystem/git-credential-manager/releases/download/v2.1.2/gcm-linux_amd64.2.1.2.deb
+  dpkg -i gcm-linux_amd64.2.1.2.deb
+  rm gcm-linux_amd64.2.1.2.deb
+}
+
+function setup_python {
+  update-alternatives --install /usr/bin/python python "/usr/bin/python3.11" 10
+  
+  # Setup pip
+  curl https://bootstrap.pypa.io/get-pip.py | python
+
+  # Setup poetry
+  POETRY_URL="https://install.python-poetry.org"
+
+  mkdir -p "${POETRY_HOME}"
+  chown -R "${USER}":"${GROUP}" "${POETRY_HOME}"
+
+  su "${USER}" -c "curl -sSL ${POETRY_URL} | python"
+  # Create the env file manually; installers prior to 1.2.0 created this by default
+  su "${USER}" -c "echo \"export PATH=\\\"${POETRY_HOME}/bin:\\\$PATH\\\"\" > \"${POETRY_HOME}/env\""
+
+  chmod +x "${POETRY_HOME}"/bin/*
+}
+
+function setup_extras {
+  label "Setting up extras"
+
+  for task in $TASKS; do
+    tasksel install $task
+  done
+
+  apt-fast install -y $APT_EXTRAS
 }
 
 function setup_services {
   label "Enabling services"
-  services="docker sshd"
+  services="docker ssh mongod"
 
   echo "Enabling and starting: $services"
 
@@ -121,6 +237,41 @@ function setup_user {
 
 function setup_env {
   label "Setting up local environment"
+
+  echo "Preparing /etc/profile.d/dev-env.sh"
+  cat << EOF > /etc/profile.d/dev-env.sh
+export PYTHONUNBUFFERED="1"
+export DEB_PYTHON_INSTALL_LAYOUT="deb"
+export POETRY_HOME="/usr/local/poetry"
+export PATH="${PATH}:${POETRY_HOME}/bin"
+EOF
+
+  echo "Setting up /etc/default/locale"
+  cat << EOF > /etc/default/locale
+LANG=$LANG
+LANGUAGE=$LANGUAGE
+LC_ALL=$LC_ALL
+LC_NUMERIC=$LC_NUMERIC
+LC_TIME=$LC_TIME
+LC_MONETARY=$LC_MONETARY
+LC_PAPER=$LC_PAPER
+LC_NAME=$LC_NAME
+LC_ADDRESS=$LC_ADDRESS
+LC_TELEPHONE=$LC_TELEPHONE
+LC_MEASUREMENT=$LC_MEASUREMENT
+TIME_STYLE="$TIME_STYLE"
+EOF
+
+  echo "Setting up /etc/locale.gen"
+  cat << EOF > /etc/locale.gen
+en_CA.UTF-8 UTF-8  
+en_DK.UTF-8 UTF-8  
+en_IE.UTF-8 UTF-8  
+en_US.UTF-8 UTF-8  
+EOF
+
+  echo "Generating locales"
+  locale-gen
 
   echo "Preparing ~/.local/bin"
   sudo -u "$USER" mkdir -p "$USER_HOME/.local/bin"
@@ -148,17 +299,13 @@ function setup_env {
 
 # start dev_setup.sh
 
-# The next line updates PATH for the Google Cloud SDK.
-source opt/google-cloud-sdk/path.zsh.inc
-
 # The next line enables shell command completion for gcloud.
-source /opt/google-cloud-sdk/completion.zsh.inc
+source /usr/share/google-cloud-sdk/completion.zsh.inc
 
 export DOCKER_BUILDKIT=1
-export PATH="$PATH:$HOME/.local/bin"
-export PATH="$PATH:/opt/sublime_merge"
-export PATH="$PATH:/opt/sublime_text"
-export PATH="$PATH:$HOME/go/bin"
+export PATH="\$PATH:\$HOME/.local/bin"
+export PATH="\$PATH:\$HOME/.local/poetry/bin"
+export PATH="\$PATH:\$HOME/go/bin"
 
 # end dev_setup.sh
 
@@ -171,17 +318,13 @@ EOF
 
 # start dev_setup.sh
 
-# The next line updates PATH for the Google Cloud SDK.
-source /opt/google-cloud-sdk/path.bash.inc
-
 # The next line enables shell command completion for gcloud.
-source /opt/google-cloud-sdk/completion.bash.inc
+source /usr/share/google-cloud-sdk/completion.bash.inc
 
 export DOCKER_BUILDKIT=1
-export PATH="$PATH:$HOME/.local/bin"
-export PATH="$PATH:/opt/sublime_merge"
-export PATH="$PATH:/opt/sublime_text"
-export PATH="$PATH:$HOME/go/bin"
+export PATH="\$PATH:\$HOME/.local/bin"
+export PATH="\$PATH:\$HOME/.local/poetry/bin"
+export PATH="\$PATH:\$HOME/go/bin"
 
 # end dev_setup.sh
 
@@ -189,7 +332,8 @@ EOF
     # End cat
   fi
 
-  cat <<EOF > /etc/docker/daemon.json
+  # IPv6 often causes issues, including to Docker
+  cat << EOF > /etc/docker/daemon.json
 {
   "ipv6": false
 }
@@ -202,7 +346,10 @@ EOF
 function install_tools {
   label "Installing development tools"
 
-  npm install -g firebase-tools
+  pnpm setup
+  source $HOME/.bashrc
+  
+  pnpm install -g firebase-tools
 
   sudo -u "$USER" go install github.com/codegangsta/gin@latest
   sudo -u "$USER" go install github.com/lietu/go-pre-commit@latest
@@ -230,17 +377,18 @@ echo
 echo "Setting up for development for the user ${USER}"
 echo
 
-echo "MAKE SURE YOUR SYSTEM IS FULLY UPDATED BEFORE STARTING"
-echo "Run: sudo pacman -Syu"
-echo "And then REBOOT"
-echo
-
 echo "Press Enter to continue, or Ctrl+C to abort."
 read
 
+setup_basic_deps
 install_keys
 setup_repos
-setup_basic_deps
+setup_docker
+setup_mongodb
+setup_node
+setup_rust
+setup_gcm
+setup_python
 setup_extras
 setup_services
 setup_user
